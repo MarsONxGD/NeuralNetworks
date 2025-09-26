@@ -1,3 +1,7 @@
 .idea
-Misc/*
+__pycache__
+
+Misc*
+data*
+
 *.png

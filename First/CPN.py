@@ -1,128 +1,175 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 
-class KohonenNeuron:
-    def __init__(self, input_size):
-        self.weights = np.random.randn(input_size) * 0.1
-
-    def distance(self, x):
-        return np.linalg.norm(self.weights - x)  # Используем расстояние
-
-    def update_weights(self, x, learning_rate):
-        self.weights += learning_rate * (x - self.weights)
-
-
-class GrossbergNeuron:
-    def __init__(self, input_size):
-        self.weights = np.random.randn(input_size) * 0.1
-
-    def predict(self, x):
-        return np.dot(self.weights, x)
-
-    def update_weights(self, x, target, learning_rate):
-        self.weights += learning_rate * (target - self.predict(x)) * x
-
-
-class CPN:
-    def __init__(self, input_size, kohonen_size, output_size):
+class KohonenMap:
+    def __init__(self, grid_size, input_size):
+        self.grid_size = grid_size
         self.input_size = input_size
-        self.kohonen_size = kohonen_size
-        self.output_size = output_size
+        self.weights = np.random.rand(grid_size[0], grid_size[1], input_size)
 
-        self.kohonen_layer = [KohonenNeuron(input_size) for _ in range(kohonen_size)]
-        self.grossberg_layer = [GrossbergNeuron(kohonen_size) for _ in range(output_size)]
+    def euclidean_distance(self, x, y):
+        return np.sqrt(np.sum((x - y) ** 2))
 
-    def predict(self, x):
-        # Находим победителя по минимальному расстоянию
-        distances = np.array([neuron.distance(x) for neuron in self.kohonen_layer])
-        winner_idx = np.argmin(distances)  # MIN расстояние, а не MAX скалярное произведение
+    def get_bmu(self, input_vec):
+        min_dist = float('inf')
+        bmu_idx = (0, 0)
+        for i in range(self.grid_size[0]):
+            for j in range(self.grid_size[1]):
+                dist = self.euclidean_distance(input_vec, self.weights[i, j])
+                if dist < min_dist:
+                    min_dist = dist
+                    bmu_idx = (i, j)
+        return bmu_idx
 
-        # Создаем вектор победителя
-        winner_vector = np.zeros(self.kohonen_size)
-        winner_vector[winner_idx] = 1.0
+    def neighborhood_function(self, distance, radius):
+        return np.exp(-distance ** 2 / (2 * (radius ** 2)))
 
-        # Прямое распространение через слой Гроссберга
-        return np.array([neuron.predict(winner_vector) for neuron in self.grossberg_layer])
+    def train(self, data, epochs=100, initial_lr=0.1, initial_radius=None):
+        if initial_radius is None:
+            initial_radius = max(self.grid_size) / 2
 
-    def train(self, X, y, kohonen_lr=0.3, grossberg_lr=0.1, epochs=1000):
         for epoch in range(epochs):
-            total_error = 0
+            lr = initial_lr * np.exp(-epoch / epochs)
+            radius = initial_radius * np.exp(-epoch / epochs)
 
-            for i in range(len(X)):
-                x = X[i]
-                target = y[i]
+            for input_vec in data:
+                bmu_i, bmu_j = self.get_bmu(input_vec)
 
-                # Фаза 1 - Обучение Кохонена (по расстоянию)
-                distances = np.array([neuron.distance(x) for neuron in self.kohonen_layer])
-                winner_idx = np.argmin(distances)
-                self.kohonen_layer[winner_idx].update_weights(x, kohonen_lr)
+                for i in range(self.grid_size[0]):
+                    for j in range(self.grid_size[1]):
+                        neuron_dist = np.sqrt((i - bmu_i) ** 2 + (j - bmu_j) ** 2)
 
-                # Фаза 2 - Обучение Гроссберга
-                winner_vector = np.zeros(self.kohonen_size)
-                winner_vector[winner_idx] = 1.0
+                        if neuron_dist <= radius:
+                            influence = self.neighborhood_function(neuron_dist, radius)
+                            self.weights[i, j] += lr * influence * (input_vec - self.weights[i, j])
 
-                for j, neuron in enumerate(self.grossberg_layer):
-                    prediction = neuron.predict(winner_vector)
-                    error = target[j] - prediction
-                    total_error += abs(error)
-                    neuron.update_weights(winner_vector, target[j], grossberg_lr)
+            if (epoch + 1) % 10 == 0:
+                print(f"Epoch {epoch + 1}/{epochs} completed")
 
-            if epoch % 100 == 0:
-                print(f"Эпоха {epoch}, Ошибка: {total_error:.4f}")
+    def get_activations(self, input_vec):
+        activations = np.zeros(self.grid_size)
+        for i in range(self.grid_size[0]):
+            for j in range(self.grid_size[1]):
+                activations[i, j] = np.exp(-self.euclidean_distance(input_vec, self.weights[i, j]))
+        return activations.flatten()
 
-            if total_error < 0.01:
-                print(f"Эпоха {epoch}, Ошибка: {total_error:.4f}")
-                print("Обучение завершено!")
-                break
+    def visualize(self, data=None):
+        plt.figure(figsize=(10, 8))
 
+        for i in range(self.grid_size[0]):
+            for j in range(self.grid_size[1]):
+                plt.scatter(i, j, color=self.weights[i, j], s=500)
 
-# Тестовые функции
-def test_or():
-    print("=" * 60)
-    print("ТЕСТИРОВАНИЕ ЛОГИЧЕСКОГО ИЛИ")
-    X = np.array([[-1, -1], [-1, 1], [1, -1], [1, 1]])
-    y = np.array([[-1], [1], [1], [1]])
+        if data is not None:
+            for point in data:
+                bmu_i, bmu_j = self.get_bmu(point)
+                plt.scatter(bmu_i, bmu_j, color=point, edgecolors='black', s=100)
 
-    cpn = CPN(2, 4, 1)
-    cpn.train(X, y, epochs=1000)
-
-    print("\nПРОВЕРКА:")
-    for i in range(len(X)):
-        prediction = cpn.predict(X[i])
-        print(f"Вход: {X[i]}, Ожидание: {y[i][0]}, Предсказание: {prediction[0]:.3f}")
+        plt.grid(True)
+        plt.title("Kohonen Self-Organizing Map")
+        plt.savefig(f'SOM.png', dpi=300, bbox_inches='tight')
 
 
-def test_xor():
-    print("=" * 60)
-    print("ТЕСТИРОВАНИЕ ЛОГИЧЕСКОГО XOR")
-    X = np.array([[-1, -1], [-1, 1], [1, -1], [1, 1]])
-    y = np.array([[-1], [1], [1], [-1]])
+class GrossbergLayer:
 
-    cpn = CPN(2, 4, 1)
-    cpn.train(X, y, epochs=1000)
+    def __init__(self, input_size, output_size):
+        self.input_size = input_size
+        self.output_size = output_size
+        self.weights = np.random.rand(output_size, input_size) * 0.1
+        self.bias = np.zeros(output_size)
 
-    print("\nПРОВЕРКА:")
-    for i in range(len(X)):
-        prediction = cpn.predict(X[i])
-        print(f"Вход: {X[i]}, Ожидание: {y[i][0]}, Предсказание: {prediction[0]:.3f}")
+    def sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    def forward(self, x):
+        return self.sigmoid(np.dot(self.weights, x) + self.bias)
+
+    def train(self, som_activations, targets, learning_rate=0.1):
+        outputs = self.forward(som_activations)
+
+        error = targets - outputs
+
+        delta = error * outputs * (1 - outputs)
+        self.weights += learning_rate * np.outer(delta, som_activations)
+        self.bias += learning_rate * delta
+
+        return np.mean(error ** 2)
+
+    def predict(self, som_activations):
+        outputs = self.forward(som_activations)
+        return np.argmax(outputs), outputs
 
 
-def test_and():
-    print("=" * 60)
-    print("ТЕСТИРОВАНИЕ ЛОГИЧЕСКОГО И")
-    X = np.array([[-1, -1], [-1, 1], [1, -1], [1, 1]])
-    y = np.array([[-1], [-1], [-1], [1]])
+def main():
+    np.random.seed(1)
 
-    cpn = CPN(2, 4, 1)
-    cpn.train(X, y, epochs=1000)
+    red_colors = np.random.rand(50, 3)
+    red_colors[:, 1:] = red_colors[:, 1:] * 0.3
 
-    print("\nПРОВЕРКА:")
-    for i in range(len(X)):
-        prediction = cpn.predict(X[i])
-        print(f"Вход: {X[i]}, Ожидание: {y[i][0]}, Предсказание: {prediction[0]:.3f}")
+    blue_colors = np.random.rand(50, 3)
+    blue_colors[:, 0] = blue_colors[:, 0] * 0.3
+    blue_colors[:, 2] = np.clip(blue_colors[:, 2] + 0.3, 0, 1)
+
+    colors = np.vstack([red_colors, blue_colors])
+    targets = np.array([0] * 50 + [1] * 50)
+
+    som = KohonenMap(grid_size=(5, 5), input_size=3)
+    som.train(colors, epochs=50)
+
+    grossberg = GrossbergLayer(input_size=25, output_size=2)
+
+    print("Обучение слоя Гроссберга...")
+    for epoch in range(100):
+        total_error = 0
+        for i, (color, target) in enumerate(zip(colors, targets)):
+            som_activations = som.get_activations(color)
+
+            target_vector = np.zeros(2)
+            target_vector[target] = 1
+
+            error = grossberg.train(som_activations, target_vector, learning_rate=0.1)
+            total_error += error
+
+        if (epoch + 1) % 20 == 0:
+            print(f"Эпоха {epoch + 1}, Средняя ошибка: {total_error / len(colors):.4f}")
+
+    # Тестирование
+    print("\nТестирование классификации:")
+    correct = 0
+    for i, (color, target) in enumerate(zip(colors, targets)):
+        som_activations = som.get_activations(color)
+        prediction, outputs = grossberg.predict(som_activations)
+
+        if prediction == target:
+            correct += 1
+            status = "✓"
+        else:
+            status = "✗"
+
+        if i < 5:
+            print(f"Цвет: {color}, Целевой: {target}, Предсказанный: {prediction}, Вероятности: {outputs} {status}")
+
+    accuracy = correct / len(colors) * 100
+    print(f"\nТочность классификации: {accuracy:.2f}%")
+
+    som.visualize(colors)
+
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.imshow(grossberg.weights[0].reshape(5, 5), cmap='viridis')
+    plt.title('Веса для класса 0 (красный)')
+    plt.colorbar()
+
+    plt.subplot(1, 2, 2)
+    plt.imshow(grossberg.weights[1].reshape(5, 5), cmap='viridis')
+    plt.title('Веса для класса 1 (синий)')
+    plt.colorbar()
+
+    plt.tight_layout()
+    plt.savefig('Grossberg_weights.png', dpi=300, bbox_inches='tight')
+    plt.show()
 
 
 if __name__ == "__main__":
-    test_or()
-    test_xor()
-    test_and()
+    main()
